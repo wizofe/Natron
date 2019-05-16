@@ -58,9 +58,11 @@ if [ "$PKGOS" = "Linux" ]; then
     else
         RHEL_MAJOR=$(cut -d" " -f3 < /etc/redhat-release | cut -d "." -f1)
         RHEL_MINOR=$(cut -d" " -f3 < /etc/redhat-release | cut -d "." -f2)
-        if [ "$RHEL_MAJOR" != "6" ] || [ "$RHEL_MINOR" != "4" ]; then
-            echo "Wrong version of CentOS/RHEL, 6.4 is the only supported version!"
-            sleep 5
+        if [ -z "$BUILD_FROM_DOCKER" ]; then
+            if [ "$RHEL_MAJOR" != "6" ] || [ "$RHEL_MINOR" != "4" ]; then
+                echo "Wrong version of CentOS/RHEL, 6.10 is the only supported version!"
+                sleep 5
+            fi
         fi
     fi
 fi
@@ -146,7 +148,7 @@ end_build() {
     echo "*** Done"
 }
 
-echo 
+echo
 echo "Building Natron-$SDK with $MKJOBS threads ..."
 echo
 
@@ -224,7 +226,7 @@ if [ ! -s "$SDK_HOME/installer/bin/qmake" ]; then
     # https://trac.macports.org/ticket/46608
     # https://codereview.qt-project.org/#/c/61294/
     # approved but abandoned.
-    patch -p0 -i "$INC_PATH"/patches/Qt/patch-src_corelib_io_qprocess_unix.cpp.diff    
+    patch -p0 -i "$INC_PATH"/patches/Qt/patch-src_corelib_io_qprocess_unix.cpp.diff
     # (28) Better invalid fonttable handling
     # Qt commit 0a2f2382 on July 10, 2015 at 7:22:32 AM EDT.
     # not included in 4.8.7 release.
@@ -291,11 +293,14 @@ PYTHON_INCLUDE="$SDK_HOME/include/python${PYVER}"
 export PKG_CONFIG_PATH LD_LIBRARY_PATH PATH BOOST_ROOT OPENJPEG_HOME THIRD_PARTY_TOOLS_HOME PYTHON_HOME PYTHON_PATH PYTHON_INCLUDE
 
 # Old Natron 2 version is 4.8.5
-GCC_VERSION=8.2.0
+#GCC_VERSION=8.2.0
 #GCC_VERSION=8.1.0 # GCC 8.1 breaks the timeline GUI on Linux, see https://github.com/NatronGitHub/Natron/issues/279
 #GCC_VERSION=7.3.0
 #GCC_VERSION=5.4.0
 #GCC_VERSION=4.9.4
+
+# disabled GCC - using host version
+if false; then
 GCC_TAR="gcc-${GCC_VERSION}.tar.gz"
 GCC_SITE="ftp://ftp.funet.fi/pub/mirrors/sources.redhat.com/pub/gcc/releases/gcc-${GCC_VERSION}"
 
@@ -359,6 +364,14 @@ fi
 export CC="${SDK_HOME}/gcc/bin/gcc"
 export CXX="${SDK_HOME}/gcc/bin/g++"
 
+else
+
+    CC=${CC:-$(which gcc)}
+    CXX=${CXX:-$(which g++)}
+
+fi # disabled GCC
+
+disabled() {
 # Install m4
 # see http://www.linuxfromscratch.org/lfs/view/development/chapter06/m4.html
 M4_VERSION=1.4.18
@@ -378,6 +391,7 @@ if [ ! -s "$SDK_HOME/bin/m4" ]; then
     rm -rf "m4-${M4_VERSION}"
     end_build "$M4_TAR"
 fi
+}
 
 # Install bzip2
 # see http://www.linuxfromscratch.org/lfs/view/development/chapter06/bzip2.html
@@ -421,7 +435,7 @@ if [ ! -s "$SDK_HOME/lib/pkgconfig/ncurses.pc" ] || [ "$(pkg-config --modversion
     env CFLAGS="$BF" CXXFLAGS="$BF" ./configure --prefix="$SDK_HOME" --with-shared --without-debug --without-normal --enable-pc-files --with-pkg-config-libdir="$SDK_HOME/lib/pkgconfig" --enable-widec
     make -j${MKJOBS}
     make install
-    #  Many applications still expect the linker to be able to find non-wide-character Ncurses libraries. Trick such applications into linking with wide-character libraries by means of symlinks and linker scripts: 
+    #  Many applications still expect the linker to be able to find non-wide-character Ncurses libraries. Trick such applications into linking with wide-character libraries by means of symlinks and linker scripts:
     for lib in ncurses form panel menu ; do
         rm -vf                    "$SDK_HOME/lib/lib${lib}.so"
         echo "INPUT(-l${lib}w)" > "$SDK_HOME/lib/lib${lib}.so"
@@ -617,6 +631,9 @@ fi
 
 # Install gmp (used by ruby)
 # see http://www.linuxfromscratch.org/lfs/view/development/chapter06/gmp.html
+GMP_VERSION=6.1.2
+GMP_TAR="gmp-${GMP_VERSION}.tar.bz2"
+GMP_SITE="https://gmplib.org/download/gmp"
 if [ ! -s "$SDK_HOME/include/gmp.h" ]; then
     REBUILD_RUBY=1
     start_build "$GMP_TAR"
@@ -633,7 +650,7 @@ fi
 
 # Install openssl
 # see http://www.linuxfromscratch.org/blfs/view/svn/postlfs/openssl10.html
-#OPENSSL_VERSION=1.0.2o # defined above
+#OPENSSL_VERSION defined above
 OPENSSL_TAR="openssl-${OPENSSL_VERSION}.tar.gz" # always a new version around the corner
 OPENSSL_SITE="https://www.openssl.org/source"
 if [ ! -s "$SDK_HOME/lib/pkgconfig/openssl.pc" ] || [ "$(env PKG_CONFIG_PATH="$SDK_HOME/lib/pkgconfig:$SDK_HOME/share/pkgconfig" pkg-config --modversion openssl)" != "$OPENSSL_VERSION" ]; then
@@ -793,6 +810,70 @@ if [ ! -s "$SDK_HOME/lib/libreadline.so.${READLINE_VERSION_MAJOR}" ]; then
     end_build "$READLINE_TAR"
 fi
 
+# Install libarchive (for cmake)
+# see http://www.linuxfromscratch.org/blfs/view/svn/general/libarchive.html
+LIBARCHIVE_VERSION=3.3.2
+LIBARCHIVE_TAR="libarchive-${LIBARCHIVE_VERSION}.tar.gz"
+LIBARCHIVE_SITE="http://www.libarchive.org/downloads"
+if [ ! -s "$SDK_HOME/lib/pkgconfig/libarchive.pc" ] || [ "$(pkg-config --modversion libarchive)" != "$LIBARCHIVE_VERSION" ]; then
+    start_build "$LIBARCHIVE_TAR"
+    download "$LIBARCHIVE_SITE" "$LIBARCHIVE_TAR"
+    untar "$SRC_PATH/$LIBARCHIVE_TAR"
+    pushd "libarchive-${LIBARCHIVE_VERSION}"
+    env CFLAGS="$BF" CXXFLAGS="$BF" ./configure --prefix="$SDK_HOME" --disable-static
+    make -j${MKJOBS}
+    make install
+    popd
+    rm -rf "libarchive-${LIBARCHIVE_VERSION}"
+    end_build "$LIBARCHIVE_TAR"
+fi
+
+# # Install libuv (for cmake)
+# # http://www.linuxfromscratch.org/blfs/view/svn/general/libuv.html
+# LIBUV_VERSION=1.22.0
+# LIBUV_TAR="libuv-${LIBUV_VERSION}.tar.gz"
+# LIBUV_SITE="http://www.libuv.org/downloads"
+# if [ ! -s "$SDK_HOME/lib/pkgconfig/libuv.pc" ] || [ "$(pkg-config --modversion libuv)" != "$LIBUV_VERSION" ]; then
+#     start_build "$LIBUV_TAR"
+#     download_github libuv libuv "${LIBUV_VERSION}" v "${LIBUV_TAR}"
+#     untar "$SRC_PATH/$LIBUV_TAR"
+#     pushd "libuv-${LIBUV_VERSION}"
+#     ./autogen.sh
+#     env CFLAGS="$BF" CXXFLAGS="$BF" ./configure --prefix="$SDK_HOME" --disable-static
+#     make -j${MKJOBS}
+#     make install
+#     popd
+#     rm -rf "libuv-${LIBUV_VERSION}"
+#     end_build "$LIBUV_TAR"
+# fi
+
+# Install cmake
+# see http://www.linuxfromscratch.org/blfs/view/cvs/general/cmake.html
+#
+# cmake 3.10.1 does not compile with the system libuv
+# Utilities/cmlibuv/src/unix/posix-poll.c: In function 'uv__platform_loop_init':
+# Utilities/cmlibuv/src/unix/posix-poll.c:37:7: error: 'uv_loop_t {aka struct uv_loop_s}' has no member named 'poll_fds'
+#   loop->poll_fds = NULL;
+#       ^~
+# Since there is no way to disable libuv alone (--no-system-libuv unavailable in ./bootstrap),
+# we disable all system libs. Voilà!
+CMAKE_VERSION=3.12.0
+CMAKE_VERSION_SHORT=${CMAKE_VERSION%.*}
+CMAKE_TAR="cmake-${CMAKE_VERSION}.tar.gz"
+CMAKE_SITE="https://cmake.org/files/v${CMAKE_VERSION_SHORT}"
+if [ ! -s "$SDK_HOME/bin/cmake" ] || [ $("$SDK_HOME/bin/cmake" --version | head -1 |awk '{print $3}') != "$CMAKE_VERSION" ]; then
+    start_build "$CMAKE_TAR"
+    download "$CMAKE_SITE" "$CMAKE_TAR"
+    untar "$SRC_PATH/$CMAKE_TAR"
+    pushd "cmake-${CMAKE_VERSION}"
+    env CFLAGS="$BF" CXXFLAGS="$BF" ./configure --no-system-libs --prefix="$SDK_HOME"
+    make -j${MKJOBS}
+    make install
+    popd
+    rm -rf "cmake-${CMAKE_VERSION}"
+    end_build "$CMAKE_TAR"
+fi
+
 # Install libzip
 ZIP_VERSION=1.5.1
 ZIP_TAR="libzip-${ZIP_VERSION}.tar.xz"
@@ -806,7 +887,7 @@ if [ ! -s "$SDK_HOME/lib/pkgconfig/libzip.pc" ] || [ "$(pkg-config --modversion 
     pushd build-natron
     #env CFLAGS="$BF" CXXFLAGS="$BF" ../configure --prefix="$SDK_HOME" --disable-static --enable-shared
     # libzip adds -I$SDK_HOME/include before its own includes, and thus includes the installed zip.h
-    rm  "$SDK_HOME/include/zip.h" || true
+    rm -f "$SDK_HOME/include/zip.h"
     cmake .. -DCMAKE_INSTALL_PREFIX="$SDK_HOME" -DCMAKE_C_FLAGS="$BF" -DCMAKE_CXX_FLAGS="$BF" -DCMAKE_BUILD_TYPE="$CMAKE_BUILD_TYPE"
     make -j${MKJOBS}
     make install
@@ -976,70 +1057,6 @@ if [ ! -s "$SDK_HOME/lib/pkgconfig/libcurl.pc" ] || [ "$(pkg-config --modversion
     end_build "$CURL_TAR"
 fi
 
-# Install libarchive (for cmake)
-# see http://www.linuxfromscratch.org/blfs/view/svn/general/libarchive.html
-LIBARCHIVE_VERSION=3.3.2
-LIBARCHIVE_TAR="libarchive-${LIBARCHIVE_VERSION}.tar.gz"
-LIBARCHIVE_SITE="http://www.libarchive.org/downloads"
-if [ ! -s "$SDK_HOME/lib/pkgconfig/libarchive.pc" ] || [ "$(pkg-config --modversion libarchive)" != "$LIBARCHIVE_VERSION" ]; then
-    start_build "$LIBARCHIVE_TAR"
-    download "$LIBARCHIVE_SITE" "$LIBARCHIVE_TAR"
-    untar "$SRC_PATH/$LIBARCHIVE_TAR"
-    pushd "libarchive-${LIBARCHIVE_VERSION}"
-    env CFLAGS="$BF" CXXFLAGS="$BF" ./configure --prefix="$SDK_HOME" --disable-static
-    make -j${MKJOBS}
-    make install
-    popd
-    rm -rf "libarchive-${LIBARCHIVE_VERSION}"
-    end_build "$LIBARCHIVE_TAR"
-fi
-
-# # Install libuv (for cmake)
-# # http://www.linuxfromscratch.org/blfs/view/svn/general/libuv.html
-# LIBUV_VERSION=1.22.0
-# LIBUV_TAR="libuv-${LIBUV_VERSION}.tar.gz"
-# LIBUV_SITE="http://www.libuv.org/downloads"
-# if [ ! -s "$SDK_HOME/lib/pkgconfig/libuv.pc" ] || [ "$(pkg-config --modversion libuv)" != "$LIBUV_VERSION" ]; then
-#     start_build "$LIBUV_TAR"
-#     download_github libuv libuv "${LIBUV_VERSION}" v "${LIBUV_TAR}"
-#     untar "$SRC_PATH/$LIBUV_TAR"
-#     pushd "libuv-${LIBUV_VERSION}"
-#     ./autogen.sh
-#     env CFLAGS="$BF" CXXFLAGS="$BF" ./configure --prefix="$SDK_HOME" --disable-static
-#     make -j${MKJOBS}
-#     make install
-#     popd
-#     rm -rf "libuv-${LIBUV_VERSION}"
-#     end_build "$LIBUV_TAR"
-# fi
-
-# Install cmake
-# see http://www.linuxfromscratch.org/blfs/view/cvs/general/cmake.html
-#
-# cmake 3.10.1 does not compile with the system libuv
-# Utilities/cmlibuv/src/unix/posix-poll.c: In function 'uv__platform_loop_init':
-# Utilities/cmlibuv/src/unix/posix-poll.c:37:7: error: 'uv_loop_t {aka struct uv_loop_s}' has no member named 'poll_fds'
-#   loop->poll_fds = NULL;
-#       ^~
-# Since there is no way to disable libuv alone (--no-system-libuv unavailable in ./bootstrap),
-# we disable all system libs. Voilà!
-CMAKE_VERSION=3.12.0
-CMAKE_VERSION_SHORT=${CMAKE_VERSION%.*}
-CMAKE_TAR="cmake-${CMAKE_VERSION}.tar.gz"
-CMAKE_SITE="https://cmake.org/files/v${CMAKE_VERSION_SHORT}"
-if [ ! -s "$SDK_HOME/bin/cmake" ] || [ $("$SDK_HOME/bin/cmake" --version | head -1 |awk '{print $3}') != "$CMAKE_VERSION" ]; then
-    start_build "$CMAKE_TAR"
-    download "$CMAKE_SITE" "$CMAKE_TAR"
-    untar "$SRC_PATH/$CMAKE_TAR"
-    pushd "cmake-${CMAKE_VERSION}"
-    env CFLAGS="$BF" CXXFLAGS="$BF" ./configure --no-system-libs --prefix="$SDK_HOME"
-    make -j${MKJOBS}
-    make install
-    popd
-    rm -rf "cmake-${CMAKE_VERSION}"
-    end_build "$CMAKE_TAR"
-fi
-
 # Install icu
 # see http://www.linuxfromscratch.org/blfs/view/cvs/general/icu.html
 ICU_VERSION=62.1
@@ -1120,6 +1137,7 @@ if [ ! -s "$SDK_HOME/lib/pkgconfig/libpcre.pc" ] || [ "$(pkg-config --modversion
     end_build "$PCRE_TAR"
 fi
 
+disabled() {
 # Install git (requires curl and pcre)
 # see http://www.linuxfromscratch.org/blfs/view/svn/general/git.html
 GIT_VERSION=2.17.0
@@ -1137,6 +1155,7 @@ if [ ! -s "$SDK_HOME/bin/git" ] || [ "$("${SDK_HOME}/bin/git" --version)" != "gi
     rm -rf "git-${GIT_VERSION}"
     end_build "$GIT_TAR"
 fi
+}
 
 # Install MariaDB (for the Qt mariadb plugin and the python mariadb adapter)
 # see http://www.linuxfromscratch.org/blfs/view/svn/server/mariadb.html
@@ -1217,7 +1236,7 @@ if [ ! -d "$SDK_HOME/lib/python${PY2_VERSION_SHORT}/site-packages/psycopg2" ] ||
     ${SDK_HOME}/bin/pip${PY2_VERSION_SHORT} install --no-binary psycopg2 psycopg2
     end_build "psycopg2-$PSYCOPG2_VERSION"
 fi
-    
+
 # Install Python3
 # see http://www.linuxfromscratch.org/blfs/view/svn/general/python3.html
 PY3_VERSION=3.6.5
@@ -1770,7 +1789,7 @@ if [ ! -s "$SDK_HOME/lib/pkgconfig/IlmBase.pc" ] || [ "$(pkg-config --modversion
     end_build "$EXR_ILM_TAR"
 fi
 
-if [ ! -s "$SDK_HOME/lib/pkgconfig/OpenEXR.pc" ] || [ "$(pkg-config --modversion OpenEXR)" != "$EXR_VERSION" ]; then    
+if [ ! -s "$SDK_HOME/lib/pkgconfig/OpenEXR.pc" ] || [ "$(pkg-config --modversion OpenEXR)" != "$EXR_VERSION" ]; then
     start_build "$EXR_TAR"
     download "$EXR_SITE" "$EXR_TAR"
     untar "$SRC_PATH/$EXR_TAR"
@@ -2110,7 +2129,7 @@ POPPLER_VERSION=0.67.0
 POPPLER_TAR="poppler-${POPPLER_VERSION}.tar.xz"
 POPPLER_SITE="https://poppler.freedesktop.org"
 if [ "${REBUILD_POPPLER:-}" = "1" ]; then
-    rm -rf "$SDK_HOME/include/poppler" "$SDK_HOME/lib/"libpoppler* "$SDK_HOME/lib/pkgconfig/"*poppler* || true 
+    rm -rf "$SDK_HOME/include/poppler" "$SDK_HOME/lib/"libpoppler* "$SDK_HOME/lib/pkgconfig/"*poppler* || true
 fi
 if [ ! -s "$SDK_HOME/lib/pkgconfig/poppler-glib.pc" ] || [ "$(pkg-config --modversion poppler-glib)" != "$POPPLER_VERSION" ]; then
     start_build "$POPPLER_TAR"
@@ -2493,7 +2512,7 @@ if [ ! -s "$SDK_HOME/lib/pkgconfig/vpx.pc" ] || [ "$(pkg-config --modversion vpx
     download_github webmproject libvpx "${LIBVPX_VERSION}" v "${LIBVPX_TAR}"
     untar "$SRC_PATH/$LIBVPX_TAR"
     pushd "libvpx-$LIBVPX_VERSION"
-    # This command corrects ownership and permissions of installed files. 
+    # This command corrects ownership and permissions of installed files.
     sed -i 's/cp -p/cp/' build/make/Makefile
     env CFLAGS="$BF" CXXFLAGS="$BF" ./configure --prefix="$SDK_HOME" --libdir="$SDK_HOME/lib" --enable-shared --enable-static --enable-vp8 --enable-vp9 --enable-vp9-highbitdepth --enable-multithread --enable-runtime-cpu-detect --enable-postproc --enable-pic --disable-avx --disable-avx2 --disable-examples
     make -j${MKJOBS}
@@ -2634,7 +2653,7 @@ if [ ! -s "$SDK_HOME/lib/pkgconfig/x265.pc" ] || [ "$(pkg-config --modversion x2
               -DENABLE_SHARED='FALSE'
         make -j${MKJOBS}
         popd
-        
+
         pushd build-10
         cmake ../source \
               -DCMAKE_C_FLAGS="$BF" -DCMAKE_CXX_FLAGS="$BF"  -DCMAKE_INSTALL_PREFIX="$SDK_HOME" -DCMAKE_BUILD_TYPE="$CMAKE_BUILD_TYPE" \
@@ -2644,7 +2663,7 @@ if [ ! -s "$SDK_HOME/lib/pkgconfig/x265.pc" ] || [ "$(pkg-config --modversion x2
               -DENABLE_SHARED='FALSE'
         make -j${MKJOBS}
         popd
-        
+
         pushd build-8
 
         ln -sfv ../build-10/libx265.a libx265_main10.a
@@ -2699,11 +2718,11 @@ if [ ! -s "$SDK_HOME/lib/libxvidcore.so" ]; then
     download "$XVID_SITE" "$XVID_TAR"
     untar "$SRC_PATH/$XVID_TAR"
     pushd xvidcore/build/generic
-    # Fix error during make install if reintalling or upgrading. 
+    # Fix error during make install if reintalling or upgrading.
     sed -i 's/^LN_S=@LN_S@/& -f -v/' platform.inc.in
     env CFLAGS="$BF" CXXFLAGS="$BF" ./configure --prefix="$SDK_HOME" --libdir="$SDK_HOME/lib" --enable-shared --enable-static
     make -j${MKJOBS}
-    # This command disables installing the static library. 
+    # This command disables installing the static library.
     sed -i '/libdir.*STATIC_LIB/ s/^/#/' Makefile
     make install
     chmod +x "$SDK_HOME/lib/libxvidcore.so".*.*
@@ -3104,7 +3123,7 @@ if false; then #[ ! -s "$QT5PREFIX/lib/pkgconfig/shiboken2.pc" ] || [ "$(env PKG
         -DPYTHON_INCLUDE_DIR="$PY_INC" \
         -DUSE_PYTHON3="$USE_PY3" \
         -DQT_QMAKE_EXECUTABLE="$QT5PREFIX/bin/qmake"
-    make -j${MKJOBS} 
+    make -j${MKJOBS}
     make install
     popd
     popd
@@ -3176,7 +3195,7 @@ if [ ! -s "$QT4PREFIX/lib/pkgconfig/QtCore.pc" ] || [ "$(env PKG_CONFIG_PATH=$QT
     QT_CONF+=( "-no-phonon" "-no-phonon-backend" )
     # disable openvg
     QT_CONF+=( "-no-openvg" )
-    
+
     download "$QT4_SITE" "$QT4_TAR"
     untar "$SRC_PATH/$QT4_TAR"
     pushd "qt-everywhere-opensource-src-${QT4_VERSION}"
@@ -3384,7 +3403,7 @@ if [ ! -s "$QT4PREFIX/lib/pkgconfig/QtCore.pc" ] || [ "$(env PKG_CONFIG_PATH=$QT
 
     #####################################################################
     # Natron-specific patches
-    
+
     patch -Np0 -i "$INC_PATH"/patches/Qt/patch-qt-custom-threadpool.diff
     patch -Np0 -i "$INC_PATH"/patches/Qt/qt4-kde-fix.diff
 
@@ -3396,7 +3415,7 @@ if [ ! -s "$QT4PREFIX/lib/pkgconfig/QtCore.pc" ] || [ "$(env PKG_CONFIG_PATH=$QT
     # https://trac.macports.org/ticket/46608
     # https://codereview.qt-project.org/#/c/61294/
     # approved but abandoned.
-    patch -Np0 -i "$INC_PATH"/patches/Qt/patch-src_corelib_io_qprocess_unix.cpp.diff    
+    patch -Np0 -i "$INC_PATH"/patches/Qt/patch-src_corelib_io_qprocess_unix.cpp.diff
     # (28) Better invalid fonttable handling
     # Qt commit 0a2f2382 on July 10, 2015 at 7:22:32 AM EDT.
     # not included in 4.8.7 release.
@@ -3487,7 +3506,7 @@ if [ ! -s "$SHIBOKEN_PREFIX/lib/pkgconfig/shiboken.pc" ] || [ "$(env PKG_CONFIG_
         -DPYTHON_INCLUDE_DIR="$PY_INC" \
         -DUSE_PYTHON3="$USE_PY3" \
         -DQT_QMAKE_EXECUTABLE="$QT4PREFIX/bin/qmake"
-    make -j${MKJOBS} 
+    make -j${MKJOBS}
     make install
     popd
     popd

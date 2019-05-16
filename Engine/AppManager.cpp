@@ -2119,7 +2119,7 @@ AppManager::loadPythonGroups()
     ///Also import Pyside.QtCore and Pyside.QtGui (the later only in non background mode)
     {
         std::string s;
-        if (SHIBOKEN_MAJOR_VERSION == 2) {
+        if (SHIBOKEN_MAJOR_VERSION == 5) {
             s = "import PySide2\nimport PySide2.QtCore as QtCore";
         } else {
             s = "import PySide\nimport PySide.QtCore as QtCore";
@@ -2137,7 +2137,7 @@ AppManager::loadPythonGroups()
 
     if ( !isBackground() ) {
         std::string s;
-        if (SHIBOKEN_MAJOR_VERSION == 2) {
+        if (SHIBOKEN_MAJOR_VERSION == 5) {
             s = "import PySide2.QtGui as QtGui";
         } else {
             s = "import PySide.QtGui as QtGui";
@@ -3745,13 +3745,16 @@ NATRON_PYTHON_NAMESPACE::interpretPythonScript(const std::string& script,
     PythonGILLocker pgl;
     PyObject* mainModule = NATRON_PYTHON_NAMESPACE::getMainModule();
     PyObject* dict = PyModule_GetDict(mainModule);
+    PyObject* v = nullptr;
 
-    PyErr_Clear();
+    if (not PyErr_Occurred()) {
+        PyErr_Clear();
 
-    ///This is faster than PyRun_SimpleString since is doesn't call PyImport_AddModule("__main__")
-    PyObject* v = PyRun_String(script.c_str(), Py_file_input, dict, 0);
-    if (v) {
-        Py_DECREF(v);
+        ///This is faster than PyRun_SimpleString since is doesn't call PyImport_AddModule("__main__")
+        v = PyRun_String(script.c_str(), Py_file_input, dict, 0);
+        if (v) {
+            Py_DECREF(v);
+        }
     }
 
     if (error) {

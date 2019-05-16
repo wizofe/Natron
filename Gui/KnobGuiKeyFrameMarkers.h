@@ -25,6 +25,7 @@
 #include <Python.h>
 // ***** END PYTHON BLOCK *****
 
+#include <QtCore>
 
 #include "Gui/KnobGuiWidgets.h"
 
